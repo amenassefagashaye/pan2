@@ -1,7 +1,10 @@
-// server.ts
-import { serve } from "https://deno.land/std@0.200.0/http/server.ts";
-import { acceptWebSocket, acceptable } from "https://deno.land/std@0.200.0/ws/mod.ts";
+// server.ts - አሰፋ ቢንጎ ሰርቨር
+// Real-time multiplayer Bingo game server for Deno
 
+import { serve } from "jsr:@std/http@0.200.0";
+import { serveDir } from "jsr:@std/http@0.200.0/file-server";
+
+// Types and Interfaces
 interface Player {
   id: string;
   name: string;
@@ -39,11 +42,19 @@ interface GameState {
   autoCallIntervalId: number | null;
 }
 
+// Helper function to generate random ID
+function generateId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).substring(2);
+}
+
+// Bingo Server Class
 class BingoServer {
   private gameState: GameState;
-  private connections: Map<WebSocket, { type: 'player' | 'admin', playerId?: string }> = new Map();
+  private connections: Map<WebSocket, { type: 'player' | 'admin', playerId?: string }>;
 
   constructor() {
+    this.connections = new Map();
+    
     this.gameState = {
       players: new Map(),
       calledNumbers: [],
@@ -61,179 +72,8 @@ class BingoServer {
     };
   }
 
-  async handleRequest(req: Request): Promise<Response> {
-    const url = new URL(req.url);
-    
-    // Handle WebSocket connections
-    if (req.headers.get("upgrade") === "websocket") {
-      if (acceptable(req)) {
-        const { socket, response } = Deno.upgradeWebSocket(req);
-        this.handleWebSocket(socket);
-        return response;
-      }
-      return new Response("WebSocket upgrade failed", { status: 400 });
-    }
-    
-    // Handle HTTP requests
-    if (url.pathname === "/health") {
-      return new Response(JSON.stringify({
-        status: "ok",
-        players: this.gameState.players.size,
-        gameActive: this.gameState.gameActive
-      }), {
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-    
-    // Default response
-    return new Response(JSON.stringify({
-      name: "አሰፋ ቢንጎ ሰርቨር",
-      version: "1.0.0",
-      endpoints: ["/health", "/ws"]
-    }), {
-      headers: { "Content-Type": "application/json" }
-    });
-  }
-
-  private handleWebSocket(socket: WebSocket) {
-    console.log("New WebSocket connection established");
-    
-    socket.onopen = () => {
-      console.log("WebSocket connection opened");
-    };
-
-    socket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        this.handleMessage(socket, data);
-      } catch (error) {
-        console.error("Error parsing message:", error);
-        this.sendError(socket, "Invalid message format");
-      }
-    };
-
-    socket.onclose = () => {
-      console.log("WebSocket connection closed");
-      this.handleDisconnection(socket);
-    };
-
-    socket.onerror = (error) => {
-      console.error("WebSocket error:", error);
-    };
-  }
-
-  private handleMessage(socket: WebSocket, data: any) {
-    const { type, data: payload } = data;
-
-    switch (type) {
-      case 'setAdmin':
-        this.handleSetAdmin(socket);
-        break;
-      
-      case 'joinGame':
-        this.handleJoinGame(socket, payload);
-        break;
-      
-      case 'markNumber':
-        this.handleMarkNumber(socket, payload);
-        break;
-      
-      case 'claimBingo':
-        this.handleClaimBingo(socket, payload);
-        break;
-      
-      case 'adminStartGame':
-        this.handleAdminStartGame(socket);
-        break;
-      
-      case 'adminPauseGame':
-        this.handleAdminPauseGame(socket);
-        break;
-      
-      case 'adminResetGame':
-        this.handleAdminResetGame(socket);
-        break;
-      
-      case 'adminCallNumber':
-        this.handleAdminCallNumber(socket);
-        break;
-      
-      case 'adminCallSpecific':
-        this.handleAdminCallSpecific(socket, payload);
-        break;
-      
-      case 'adminToggleAutoCall':
-        this.handleAdminToggleAutoCall(socket, payload);
-        break;
-      
-      case 'adminUpdateSettings':
-        this.handleAdminUpdateSettings(socket, payload);
-        break;
-      
-      default:
-        this.sendError(socket, 'Unknown message type');
-    }
-  }
-
-  private handleSetAdmin(socket: WebSocket) {
-    this.gameState.adminConnections.add(socket);
-    this.connections.set(socket, { type: 'admin' });
-    
-    this.sendToSocket(socket, {
-      type: 'gameState',
-      data: this.getPublicGameState()
-    });
-    
-    console.log('Admin connected');
-  }
-
-  private handleJoinGame(socket: WebSocket, playerData: any) {
-    const player: Player = {
-      id: playerData.id || `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      name: playerData.name,
-      stake: playerData.stake || 25,
-      boardType: playerData.boardType || '75ball',
-      board: this.generateBoard(playerData.boardType || '75ball'),
-      markedNumbers: new Set(),
-      socket: socket,
-      connected: true,
-      joinedAt: new Date(),
-      lastActivity: new Date()
-    };
-
-    this.gameState.players.set(player.id, player);
-    this.connections.set(socket, { type: 'player', playerId: player.id });
-
-    // Send board to player
-    this.sendToSocket(socket, {
-      type: 'board',
-      data: player.board
-    });
-
-    // Send current game state
-    this.sendToSocket(socket, {
-      type: 'gameState',
-      data: this.getPublicGameState()
-    });
-
-    // Notify everyone about new player
-    this.broadcast({
-      type: 'playerJoined',
-      data: {
-        id: player.id,
-        name: player.name,
-        stake: player.stake,
-        boardType: player.boardType
-      }
-    }, [socket]); // Exclude the new player
-
-    // Update admin panels
-    this.updateAdmins();
-
-    console.log(`Player joined: ${player.name} (${player.id})`);
-  }
-
-  private generateBoard(boardType: string): any {
+  // Generate different types of Bingo boards
+  generateBoard(boardType: string): any {
     switch (boardType) {
       case '75ball':
         return this.generate75BallBoard();
@@ -315,32 +155,31 @@ class BingoServer {
       const [min, max] = ranges[col];
       const numbers = new Set<number>();
       
-      // Each column gets exactly 3 numbers (one in each row, but blank spaces allowed)
-      const numCount = 3; // Fixed 3 numbers per column for 90-ball
-      
-      while (numbers.size < numCount) {
+      while (numbers.size < 3) {
         numbers.add(Math.floor(Math.random() * (max - min + 1)) + min);
       }
       
       const sortedNumbers = Array.from(numbers).sort((a, b) => a - b);
       
-      // Assign to rows 0, 1, 2 (some will be null for blank spaces)
-      for (let row = 0; row < 3; row++) {
-        if (row < sortedNumbers.length) {
-          board.numbers[row][col] = {
-            number: sortedNumbers[row],
+      // Distribute numbers randomly in column
+      const positions = [0, 1, 2].sort(() => Math.random() - 0.5);
+      
+      for (let i = 0; i < 3; i++) {
+        if (i < sortedNumbers.length) {
+          board.numbers[positions[i]][col] = {
+            number: sortedNumbers[i],
             column: col + 1,
             marked: false,
-            row: row,
+            row: positions[i],
             col: col
           };
         } else {
-          board.numbers[row][col] = {
+          board.numbers[positions[i]][col] = {
             number: null,
             column: col + 1,
             marked: false,
             blank: true,
-            row: row,
+            row: positions[i],
             col: col
           };
         }
@@ -422,6 +261,148 @@ class BingoServer {
     return newArray;
   }
 
+  // Handle WebSocket connections
+  async handleWebSocket(req: Request): Promise<Response> {
+    const { socket, response } = Deno.upgradeWebSocket(req);
+    
+    socket.onopen = () => {
+      console.log('WebSocket connection opened');
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        this.handleMessage(socket, data);
+      } catch (error) {
+        console.error('Error parsing message:', error);
+        this.sendError(socket, 'Invalid message format');
+      }
+    };
+
+    socket.onclose = () => {
+      console.log('WebSocket connection closed');
+      this.handleDisconnection(socket);
+    };
+
+    socket.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+
+    return response;
+  }
+
+  private handleMessage(socket: WebSocket, data: any) {
+    const { type, data: payload } = data;
+
+    switch (type) {
+      case 'setAdmin':
+        this.handleSetAdmin(socket);
+        break;
+      
+      case 'joinGame':
+        this.handleJoinGame(socket, payload);
+        break;
+      
+      case 'markNumber':
+        this.handleMarkNumber(socket, payload);
+        break;
+      
+      case 'claimBingo':
+        this.handleClaimBingo(socket, payload);
+        break;
+      
+      case 'adminStartGame':
+        this.handleAdminStartGame(socket);
+        break;
+      
+      case 'adminPauseGame':
+        this.handleAdminPauseGame(socket);
+        break;
+      
+      case 'adminResetGame':
+        this.handleAdminResetGame(socket);
+        break;
+      
+      case 'adminCallNumber':
+        this.handleAdminCallNumber(socket);
+        break;
+      
+      case 'adminCallSpecific':
+        this.handleAdminCallSpecific(socket, payload);
+        break;
+      
+      case 'adminToggleAutoCall':
+        this.handleAdminToggleAutoCall(socket, payload);
+        break;
+      
+      case 'adminUpdateSettings':
+        this.handleAdminUpdateSettings(socket, payload);
+        break;
+      
+      default:
+        this.sendError(socket, 'Unknown message type');
+    }
+  }
+
+  private handleSetAdmin(socket: WebSocket) {
+    this.gameState.adminConnections.add(socket);
+    this.connections.set(socket, { type: 'admin' });
+    
+    this.sendToSocket(socket, {
+      type: 'gameState',
+      data: this.getPublicGameState()
+    });
+    
+    console.log('Admin connected');
+  }
+
+  private handleJoinGame(socket: WebSocket, playerData: any) {
+    const playerId = playerData.id || generateId();
+    const player: Player = {
+      id: playerId,
+      name: playerData.name || 'Player',
+      stake: playerData.stake || 25,
+      boardType: playerData.boardType || '75ball',
+      board: this.generateBoard(playerData.boardType || '75ball'),
+      markedNumbers: new Set(),
+      socket: socket,
+      connected: true,
+      joinedAt: new Date(),
+      lastActivity: new Date()
+    };
+
+    this.gameState.players.set(player.id, player);
+    this.connections.set(socket, { type: 'player', playerId: player.id });
+
+    // Send board to player
+    this.sendToSocket(socket, {
+      type: 'board',
+      data: player.board
+    });
+
+    // Send current game state
+    this.sendToSocket(socket, {
+      type: 'gameState',
+      data: this.getPublicGameState()
+    });
+
+    // Notify everyone about new player
+    this.broadcast({
+      type: 'playerJoined',
+      data: {
+        id: player.id,
+        name: player.name,
+        stake: player.stake,
+        boardType: player.boardType
+      }
+    }, [socket]);
+
+    // Update admin panels
+    this.updateAdmins();
+
+    console.log(`Player joined: ${player.name} (${player.id})`);
+  }
+
   private handleMarkNumber(socket: WebSocket, payload: any) {
     const connection = this.connections.get(socket);
     if (!connection || connection.type !== 'player' || !connection.playerId) return;
@@ -433,7 +414,90 @@ class BingoServer {
     if (number && number !== 'FREE') {
       player.markedNumbers.add(Number(number));
       player.lastActivity = new Date();
+      
+      // Check for win
+      this.checkForWin(player);
     }
+  }
+
+  private checkForWin(player: Player) {
+    const patterns = this.getWinningPatterns(player.board.type);
+    
+    for (const pattern of patterns) {
+      if (this.verifyBingo(player, pattern)) {
+        this.notifyPlayerWinReady(player, pattern);
+        return;
+      }
+    }
+  }
+
+  private getWinningPatterns(boardType: string): string[] {
+    switch(boardType) {
+      case '75ball':
+        return ['row', 'column', 'diagonal', 'four-corners', 'full-house'];
+      case '90ball':
+        return ['one-line', 'two-lines', 'full-house'];
+      case '30ball':
+        return ['full-house'];
+      case 'pattern':
+        return ['x-pattern', 'frame', 'postage-stamp', 'small-diamond'];
+      case 'coverall':
+        return ['full-board'];
+      default:
+        return ['full-house'];
+    }
+  }
+
+  private verifyBingo(player: Player, pattern: string): boolean {
+    const markedCount = player.markedNumbers.size;
+    const board = player.board;
+    
+    switch (pattern) {
+      case 'full-house':
+        if (board.type === '75ball' || board.type === 'pattern') {
+          return markedCount >= 24; // 25 cells minus free space
+        } else if (board.type === '90ball') {
+          return markedCount >= 15;
+        } else if (board.type === '30ball') {
+          return markedCount >= 9;
+        } else if (board.type === 'coverall') {
+          return markedCount >= 45;
+        }
+        break;
+        
+      case 'row':
+      case 'column':
+      case 'diagonal':
+      case 'one-line':
+        return markedCount >= 5;
+        
+      case 'two-lines':
+        return markedCount >= 10;
+        
+      case 'four-corners':
+        return markedCount >= 4;
+        
+      case 'x-pattern':
+      case 'frame':
+      case 'postage-stamp':
+      case 'small-diamond':
+        return markedCount >= 5;
+        
+      default:
+        return false;
+    }
+    
+    return false;
+  }
+
+  private notifyPlayerWinReady(player: Player, pattern: string) {
+    this.sendToSocket(player.socket, {
+      type: 'winReady',
+      data: {
+        pattern: pattern,
+        patternName: this.getPatternName(pattern)
+      }
+    });
   }
 
   private handleClaimBingo(socket: WebSocket, payload: any) {
@@ -462,8 +526,14 @@ class BingoServer {
       // Announce winner to all
       this.broadcast({
         type: 'winnerAnnounced',
-        data: winner
+        data: {
+          ...winner,
+          timestamp: winner.timestamp.toISOString()
+        }
       });
+
+      // Reset player's marked numbers for next game
+      player.markedNumbers.clear();
 
       console.log(`Bingo verified! ${player.name} won ${prize} with pattern ${pattern}`);
     } else {
@@ -471,36 +541,9 @@ class BingoServer {
     }
   }
 
-  private verifyBingo(player: Player, pattern: string): boolean {
-    const markedCount = player.markedNumbers.size;
-    
-    switch (pattern) {
-      case 'full-house':
-        return markedCount >= 24; // 25 cells minus free space
-      case 'row':
-      case 'column':
-      case 'diagonal':
-        return markedCount >= 5;
-      case 'four-corners':
-        return markedCount >= 4;
-      case 'one-line':
-        return markedCount >= 5;
-      case 'two-lines':
-        return markedCount >= 10;
-      case 'full-board':
-        return markedCount >= 45;
-      case 'x-pattern':
-      case 'frame':
-      case 'postage-stamp':
-      case 'small-diamond':
-        return markedCount >= 5;
-      default:
-        return markedCount >= 5;
-    }
-  }
-
   private calculatePrize(stake: number): number {
     const totalStakes = Array.from(this.gameState.players.values())
+      .filter(p => p.connected)
       .reduce((sum, p) => sum + p.stake, 0);
     
     const { winPercentage, serviceFee } = this.gameState.settings;
@@ -832,17 +875,149 @@ class BingoServer {
       }
     });
   }
+
+  private getPatternName(pattern: string): string {
+    const patternNames: Record<string, string> = {
+      'row': 'ረድፍ',
+      'column': 'አምድ',
+      'diagonal': 'ዲያግናል',
+      'four-corners': 'አራት ማእዘኖች',
+      'full-house': 'ሙሉ ቤት',
+      'one-line': 'አንድ ረድፍ',
+      'two-lines': 'ሁለት ረድፍ',
+      'full-board': 'ሙሉ ቦርድ',
+      'x-pattern': 'X ንድፍ',
+      'frame': 'አውራ ቀለበት',
+      'postage-stamp': 'ማህተም',
+      'small-diamond': 'ዲያምንድ'
+    };
+    
+    return patternNames[pattern] || pattern;
+  }
 }
 
 // Create server instance
 const bingoServer = new BingoServer();
 
-// Get port from environment or default to 8080
-const port = parseInt(Deno.env.get("PORT") || "8080");
+// Main request handler
+async function handleRequest(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  
+  // WebSocket endpoint
+  if (url.pathname === '/ws' || url.pathname === '/') {
+    if (req.headers.get('upgrade') === 'websocket') {
+      return bingoServer.handleWebSocket(req);
+    }
+  }
+  
+  // Health check endpoint
+  if (url.pathname === '/health') {
+    return new Response(JSON.stringify({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      service: 'አሰፋ ቢንጎ ሰርቨር'
+    }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  // Serve static files from frontend directory (for development)
+  if (url.pathname.startsWith('/frontend/')) {
+    return serveDir(req, {
+      fsRoot: 'frontend',
+      urlRoot: 'frontend',
+      showDirListing: true,
+      enableCors: true
+    });
+  }
+  
+  // Default response
+  return new Response(
+    `<!DOCTYPE html>
+    <html>
+    <head>
+      <title>አሰፋ ቢንጎ ሰርቨር</title>
+      <meta charset="UTF-8">
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          background: linear-gradient(135deg, #0d47a1 0%, #1a237e 100%);
+          color: white;
+          min-height: 100vh;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          text-align: center;
+          padding: 20px;
+        }
+        .container {
+          background: rgba(0,0,0,0.8);
+          padding: 40px;
+          border-radius: 20px;
+          border: 3px solid #ffd700;
+          max-width: 600px;
+        }
+        h1 {
+          color: #ffd700;
+          margin-bottom: 20px;
+        }
+        .status {
+          background: #28a745;
+          color: white;
+          padding: 10px 20px;
+          border-radius: 10px;
+          margin: 20px 0;
+        }
+        .endpoints {
+          text-align: left;
+          background: rgba(255,255,255,0.1);
+          padding: 20px;
+          border-radius: 10px;
+          margin: 20px 0;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>አሰፋ ዲጂታል ቢንጎ ሰርቨር</h1>
+        <div class="status">✅ ሰርቨር አገልግሎት ይሰጣል</div>
+        <div class="endpoints">
+          <h3>መዳረሻ ነጥቦች:</h3>
+          <ul>
+            <li><strong>WebSocket:</strong> ws://${req.headers.get('host')}/ws</li>
+            <li><strong>Health Check:</strong> <a href="/health" style="color: #ffd700;">/health</a></li>
+            <li><strong>Player Interface:</strong> <a href="/frontend/index.html" style="color: #28a745;">/frontend/index.html</a></li>
+            <li><strong>Admin Panel:</strong> <a href="/frontend/admin.html?admin=true" style="color: #dc3545;">/frontend/admin.html?admin=true</a></li>
+          </ul>
+        </div>
+        <p>የአሰፋ ጋሻዬ ብርሃንነህ ዲጂታል ቢንጎ ስርዓት</p>
+      </div>
+    </body>
+    </html>`,
+    {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+    }
+  );
+}
 
-console.log(`Starting Bingo server on port ${port}...`);
-console.log(`WebSocket endpoint: ws://localhost:${port}`);
-console.log(`Health check: http://localhost:${port}/health`);
+// Get port from environment or default to 8080
+const port = parseInt(Deno.env.get('PORT') || '8080');
+
+console.log(`
+╔══════════════════════════════════════════════════════════════╗
+║                 አሰፋ ቢንጎ ሰርቨር አገልግሎት ጀመረ                ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║   🌐 ድረ-ገጽ:    http://localhost:${port}                       ║
+║   🔌 WebSocket: ws://localhost:${port}/ws                    ║
+║   🏥 Health:    http://localhost:${port}/health              ║
+║                                                              ║
+║   🎮 ተጫዋች:     /frontend/index.html                        ║
+║   👨‍💼 አስተዳዳሪ:  /frontend/admin.html?admin=true              ║
+║   🔐 የይለፍ ቃል:  asse2123                                    ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+`);
 
 // Start the server
-serve(bingoServer.handleRequest.bind(bingoServer), { port });
+serve(handleRequest, { port });
