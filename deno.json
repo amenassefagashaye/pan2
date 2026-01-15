@@ -1,10 +1,40 @@
 {
+  "name": "assefa-bingo-server",
+  "version": "1.0.0",
+  "description": "አሰፋ ዲጂታል ቢንጎ ሰርቨር - Real-time multiplayer Bingo game server",
+  "exports": "./server.ts",
   "tasks": {
-    "start": "deno run --allow-net --allow-read server.ts",
-    "dev": "deno run --watch --allow-net --allow-read server.ts"
+    "start": "deno run --allow-net --allow-env --watch server.ts",
+    "dev": "deno run --allow-net --allow-env --watch server.ts",
+    "prod": "deno run --allow-net --allow-env server.ts",
+    "check": "deno check server.ts",
+    "lint": "deno lint server.ts",
+    "test": "deno test --allow-net --allow-env",
+    "fmt": "deno fmt server.ts"
   },
   "imports": {
-    "http/": "https://deno.land/std@0.168.0/http/",
-    "websocket": "https://deno.land/x/websocket@v0.1.4/mod.ts"
+    "@std/http": "jsr:@std/http@^0.200.0",
+    "@std/ws": "jsr:@std/ws@^0.200.0"
+  },
+  "compilerOptions": {
+    "lib": ["deno.window", "es2022"],
+    "strict": true
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"],
+      "include": ["ban-untagged-todo"]
+    }
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "singleQuote": false,
+    "proseWrap": "preserve"
+  },
+  "deploy": {
+    "project": "assefa-bingo",
+    "exclude": ["**/node_modules", "**/.git", "**/*.test.ts"],
+    "include": ["server.ts", "deno.json", "deno.lock"]
   }
 }
