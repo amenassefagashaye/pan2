@@ -1,0 +1,10 @@
+{
+  "tasks": {
+    "start": "deno run --allow-net --allow-read server.ts",
+    "dev": "deno run --watch --allow-net --allow-read server.ts"
+  },
+  "imports": {
+    "http/": "https://deno.land/std@0.168.0/http/",
+    "websocket": "https://deno.land/x/websocket@v0.1.4/mod.ts"
+  }
+}
